@@ -374,35 +374,38 @@ def webhook():
     try:
         data = request.get_json() or {}
 
-        # Extract URL from multiple possible fields
-        url = (
-            data.get("url")
-            or data.get("Competitor_1_URL__c")
-            or data.get("competitor_url")
-            or (data.get("json", {}).get("Competitor_1_URL__c") if isinstance(data.get("json"), dict) else None)
-            or (data.get("json", {}).get("url") if isinstance(data.get("json"), dict) else None)
-        )
+        pid = data.get("pid")
+        urls = data.get("urls", [])
 
-        if not url:
+        if not urls:
             return jsonify({
                 "success": False,
-                "error": "No URL provided",
+                "error": "No URLs provided",
                 "received_data": data
             }), 400
 
-        logger.info(f"Processing webhook for: {url}")
+        results = []
+        for url_entry in urls:
+            # each entry is like {"comp1_url": "..."} → take the first value
+            if not isinstance(url_entry, dict) or not url_entry:
+                continue
+            url = list(url_entry.values())[0]
 
-        # Scrape URL - new browser per request
-        result = PriceScraper.extract_price(url)
+            logger.info(f"Scraping URL for pid {pid}: {url}")
+            result = PriceScraper.extract_price(url)
 
-        # Add metadata if present
-        if isinstance(data, dict):
-            if "Id" in data:
-                result["salesforce_id"] = data["Id"]
-            if "Lead__c" in data:
-                result["lead_id"] = data["Lead__c"]
+            # Preserve compX_url key for clarity in response
+            comp_key = list(url_entry.keys())[0]
+            result["pid"] = pid
+            result["comp_key"] = comp_key
 
-        return jsonify(result)
+            results.append(result)
+
+        return jsonify({
+            "pid": pid,
+            "results": results,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
 
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
